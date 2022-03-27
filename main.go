@@ -34,8 +34,10 @@ func (fi fileInfo) Path() string {
 	return fi.path
 }
 
+type DirectoryWalker struct{}
+
 //Ограничить глубину поиска заданым числом, по SIGUSR2 увеличить глубину поиска на +2
-func ListDirectory(ctx context.Context, dir string) ([]FileInfo, error) {
+func (w DirectoryWalker) ListDirectory(ctx context.Context, dir string) ([]FileInfo, error) {
 	select {
 	case <-ctx.Done():
 		return nil, nil
@@ -50,7 +52,7 @@ func ListDirectory(ctx context.Context, dir string) ([]FileInfo, error) {
 		for _, entry := range res {
 			path := filepath.Join(dir, entry.Name())
 			if entry.IsDir() {
-				child, err := ListDirectory(ctx, path) //Дополнительно: вынести в горутину
+				child, err := w.ListDirectory(ctx, path) //Дополнительно: вынести в горутину
 				if err != nil {
 					return nil, err
 				}
@@ -72,7 +74,8 @@ func FindFiles(ctx context.Context, ext string) (FileList, error) {
 	if err != nil {
 		return nil, err
 	}
-	files, err := ListDirectory(ctx, wd)
+	walker := DirectoryWalker{}
+	files, err := walker.ListDirectory(ctx, wd)
 	if err != nil {
 		return nil, err
 	}
