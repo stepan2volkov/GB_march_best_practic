@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -34,10 +35,12 @@ func (fi fileInfo) Path() string {
 	return fi.path
 }
 
-type DirectoryWalker struct{}
+type DirectoryWalker struct {
+	maxDepth int64
+}
 
 //Ограничить глубину поиска заданым числом, по SIGUSR2 увеличить глубину поиска на +2
-func (w DirectoryWalker) ListDirectory(ctx context.Context, dir string) ([]FileInfo, error) {
+func (w *DirectoryWalker) ListDirectory(ctx context.Context, dir string) ([]FileInfo, error) {
 	select {
 	case <-ctx.Done():
 		return nil, nil
@@ -69,13 +72,13 @@ func (w DirectoryWalker) ListDirectory(ctx context.Context, dir string) ([]FileI
 	}
 }
 
-func FindFiles(ctx context.Context, ext string) (FileList, error) {
+func (w *DirectoryWalker) FindFiles(ctx context.Context, ext string) (FileList, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
-	walker := DirectoryWalker{}
-	files, err := walker.ListDirectory(ctx, wd)
+
+	files, err := w.ListDirectory(ctx, wd)
 	if err != nil {
 		return nil, err
 	}
@@ -91,18 +94,24 @@ func FindFiles(ctx context.Context, ext string) (FileList, error) {
 	return fl, nil
 }
 
+func (w *DirectoryWalker) IncreaseDepth(delta int) {
+	atomic.AddInt64(&w.maxDepth, int64(delta))
+}
+
 func main() {
 	const wantExt = ".go"
 	ctx := context.Background()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR2)
+
+	walker := DirectoryWalker{maxDepth: 5}
 
 	//Обработать сигнал SIGUSR1
 	waitCh := make(chan struct{})
 	go func() {
-		res, err := FindFiles(ctx, wantExt)
+		res, err := walker.FindFiles(ctx, wantExt)
 		if err != nil {
 			log.Printf("Error on search: %v\n", err)
 			os.Exit(1)
@@ -113,9 +122,13 @@ func main() {
 		waitCh <- struct{}{}
 	}()
 	go func() {
-		<-sigCh
-		log.Println("Signal received, terminate...")
-		cancel()
+		switch <-sigCh {
+		case syscall.SIGUSR2:
+			walker.IncreaseDepth(2)
+		default:
+			log.Println("Signal received, terminate...")
+			cancel()
+		}
 	}()
 	//Дополнительно: Ожидание всех горутин перед завершением
 	<-waitCh
