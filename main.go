@@ -15,12 +15,12 @@ import (
 	"time"
 )
 
-type FileList []TargetFile
-
 type TargetFile struct {
 	Path string
 	Name string
 }
+
+type FileList []TargetFile
 
 type FileInfo interface {
 	os.FileInfo
