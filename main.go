@@ -9,17 +9,20 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+type FileList []TargetFile
 
 type TargetFile struct {
 	Path string
 	Name string
 }
 
-type FileList map[string]TargetFile
+// type FileList map[string]TargetFile
 
 type FileInfo interface {
 	os.FileInfo
@@ -36,39 +39,45 @@ func (fi fileInfo) Path() string {
 }
 
 type DirectoryWalker struct {
-	maxDepth int64
+	maxDepth               int64
+	needPrintCurrentStatus <-chan struct{}
+	wg                     *sync.WaitGroup
 }
 
 //Ограничить глубину поиска заданым числом, по SIGUSR2 увеличить глубину поиска на +2
-func (w *DirectoryWalker) ListDirectory(ctx context.Context, dir string) ([]FileInfo, error) {
-	select {
-	case <-ctx.Done():
-		return nil, nil
-	default:
-		//По SIGUSR1 вывести текущую директорию и текущую глубину поиска
-		time.Sleep(time.Second * 10)
-		var result []FileInfo
-		res, err := os.ReadDir(dir)
-		if err != nil {
-			return nil, err
-		}
-		for _, entry := range res {
+func (w *DirectoryWalker) ListDirectory(ctx context.Context, ret chan<- FileInfo, dir string, depth int64) {
+	defer w.wg.Done()
+	if depth >= w.maxDepth {
+		return
+	}
+
+	res, err := os.ReadDir(dir)
+	if err != nil {
+		log.Printf("[ERROR] %v\n", err)
+	}
+
+	for _, entry := range res {
+		time.Sleep(time.Second)
+		select {
+		case <-ctx.Done():
+			return
+		case <-w.needPrintCurrentStatus:
+			fmt.Printf("\tDepth %d from %d.\n\tCWD: %s\n", depth, w.maxDepth, dir)
+		default:
 			path := filepath.Join(dir, entry.Name())
+			log.Printf("[INFO] Scanning '%s'\n", path)
 			if entry.IsDir() {
-				child, err := w.ListDirectory(ctx, path) //Дополнительно: вынести в горутину
-				if err != nil {
-					return nil, err
-				}
-				result = append(result, child...)
+				w.wg.Add(1)
+				go w.ListDirectory(ctx, ret, path, depth+1)
 			} else {
 				info, err := entry.Info()
 				if err != nil {
-					return nil, err
+					log.Printf("[ERROR] %v\n", err)
+					continue
 				}
-				result = append(result, fileInfo{info, path})
+				ret <- fileInfo{info, path}
 			}
 		}
-		return result, nil
 	}
 }
 
@@ -78,20 +87,22 @@ func (w *DirectoryWalker) FindFiles(ctx context.Context, ext string) (FileList, 
 		return nil, err
 	}
 
-	files, err := w.ListDirectory(ctx, wd)
-	if err != nil {
-		return nil, err
-	}
-	fl := make(FileList, len(files))
-	for _, file := range files {
+	files := make(chan FileInfo, 100)
+
+	w.wg.Add(1)
+	go w.ListDirectory(ctx, files, wd, 0)
+
+	go func() {
+		w.wg.Wait()
+		close(files)
+	}()
+	var ret FileList
+	for file := range files {
 		if filepath.Ext(file.Name()) == ext {
-			fl[file.Name()] = TargetFile{
-				Name: file.Name(),
-				Path: file.Path(),
-			}
+			ret = append(ret, TargetFile{Name: file.Name(), Path: file.Path()})
 		}
 	}
-	return fl, nil
+	return ret, nil
 }
 
 func (w *DirectoryWalker) IncreaseDepth(delta int) {
@@ -99,21 +110,27 @@ func (w *DirectoryWalker) IncreaseDepth(delta int) {
 }
 
 func main() {
+	fmt.Println("Process ID:", os.Getpid())
 	const wantExt = ".go"
+
 	ctx := context.Background()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR2)
 
-	walker := DirectoryWalker{maxDepth: 5}
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1, syscall.SIGUSR2)
+
+	needPrintCurrentStatus := make(chan struct{}, 1)
+	wg := &sync.WaitGroup{}
+
+	walker := DirectoryWalker{maxDepth: 5, needPrintCurrentStatus: needPrintCurrentStatus, wg: wg}
 
 	//Обработать сигнал SIGUSR1
 	waitCh := make(chan struct{})
 	go func() {
 		res, err := walker.FindFiles(ctx, wantExt)
 		if err != nil {
-			log.Printf("Error on search: %v\n", err)
+			log.Printf("[ERROR] Error on search: %v\n", err)
 			os.Exit(1)
 		}
 		for _, f := range res {
@@ -122,12 +139,17 @@ func main() {
 		waitCh <- struct{}{}
 	}()
 	go func() {
-		switch <-sigCh {
-		case syscall.SIGUSR2:
-			walker.IncreaseDepth(2)
-		default:
-			log.Println("Signal received, terminate...")
-			cancel()
+		for {
+			switch <-sigCh {
+			case syscall.SIGUSR1:
+				needPrintCurrentStatus <- struct{}{}
+			case syscall.SIGUSR2:
+				walker.IncreaseDepth(2)
+			default:
+				log.Println("Signal received, terminate...")
+				cancel()
+				return
+			}
 		}
 	}()
 	//Дополнительно: Ожидание всех горутин перед завершением
