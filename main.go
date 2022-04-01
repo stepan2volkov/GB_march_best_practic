@@ -22,8 +22,6 @@ type TargetFile struct {
 	Name string
 }
 
-// type FileList map[string]TargetFile
-
 type FileInfo interface {
 	os.FileInfo
 	Path() string
