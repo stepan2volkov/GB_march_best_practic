@@ -52,6 +52,7 @@ func (w *DirectoryWalker) ListDirectory(ctx context.Context, ret chan<- FileInfo
 	res, err := os.ReadDir(dir)
 	if err != nil {
 		log.Printf("[ERROR] %v\n", err)
+		return
 	}
 
 	for _, entry := range res {
