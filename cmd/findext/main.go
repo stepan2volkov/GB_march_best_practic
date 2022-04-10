@@ -4,13 +4,14 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"practic/internal/walker"
 	"sync"
 	"syscall"
 	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"practic/internal/walker"
 )
 
 func main() {
