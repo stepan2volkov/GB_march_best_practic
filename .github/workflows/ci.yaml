@@ -1,0 +1,32 @@
+name: CI
+on:
+  push:
+    branches:
+      - main
+      - StepanVolkov/lesson7
+  pull_request:
+jobs:
+  lint:
+    runs-on: ubuntu-18.04
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.18.x
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Lint with golangci-lint
+        uses: golangci/golangci-lint-action@v2
+        with:
+          version: v1.45.2
+  test:
+    runs-on: ubuntu-18.04
+    steps:
+    - name: Install Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.18.x
+    - name: Checkout code
+      uses: actions/checkout@v2
+    - name: Test With Coverage
+      run: go test -v ./...
