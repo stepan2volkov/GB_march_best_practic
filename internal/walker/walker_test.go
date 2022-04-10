@@ -43,10 +43,7 @@ func (f fileReaderStub) ReadDir(dir string) ([]FileInfo, error) {
 }
 
 func TestDirectoryWalker_FindFiles(t *testing.T) {
-	logger, err := zap.NewDevelopment()
-	if err != nil {
-		t.Fatalf("error when creating logger: %v", err)
-	}
+	logger := zap.NewNop()
 
 	ctx := context.Background()
 
