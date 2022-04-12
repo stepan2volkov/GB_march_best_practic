@@ -1,3 +1,5 @@
+BUILD_COMMIT := $(shell git log --format="%H" -n 1)
+
 .PHONY: check
 check: install-tools
 	./bin/golangci-lint run -c golangci-lint.yaml
@@ -12,3 +14,7 @@ install-tools:
 .PHONY: test
 test:
 	go test -race ./...
+
+.PHONY: build
+build:
+	go build -o ./build/findext -ldflags="-X 'main.BuildCommit=$(BUILD_COMMIT)'" ./cmd/findext

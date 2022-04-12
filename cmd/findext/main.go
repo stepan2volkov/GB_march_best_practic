@@ -14,8 +14,13 @@ import (
 	"practic/internal/walker"
 )
 
+var (
+	BuildCommit = ""
+)
+
 func main() {
 	logger := initLogger()
+	logger.Info("Build Commit", zap.String("Hash", BuildCommit))
 
 	logger.Info("proccess ID", zap.Int("pid", os.Getpid()))
 	const wantExt = ".go"
